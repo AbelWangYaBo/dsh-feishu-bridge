@@ -61,6 +61,13 @@
 - 入站文本统一进 `handleIncomingText`：命令（状态/帮助/ping）→ 待确认请求作答 → 私聊确认回复；消息按 `message_id` 去重；群聊不刷屏。
 - `watchMessages: false` 可关闭；未发布消息事件时退化为对已知会话的轮询（idle 约 30s）。
 
+## 聊天通道（v0.3.0）
+
+- 飞书普通消息通过 `ctx.sessionController.prompt({sessionId, content:[{type:'text',text}], mode:'queue'})` 进入会话；目标会话按「绑定 → 最近活跃根会话」解析。
+- 镜像：`ctx.on('session/event')` 监听绑定会话的 `assistant/message`，提取文本块分条发回飞书；未绑定会话不镜像。
+- 命令与确认作答优先于聊天转发；群聊默认关闭转发；设置页可开关、绑定会话、允许群聊。
+- 单测覆盖：转发目标选择、pinned 会话、群聊拦截、无会话提示、长文本分片、镜像开关、作答优先。
+
 ## 安装与配置
 
 1. 安装插件（本地目录或 tarball），在插件管理中启用；

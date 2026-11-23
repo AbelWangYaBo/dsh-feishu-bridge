@@ -52,12 +52,22 @@ window.__ModuleLoader__.load({
       questions: '同步问题选项（ask_user_question）',
       approvals: '同步权限审批',
       watchMessages: '接收飞书消息（回复“状态/帮助”与作答确认）',
+      chat: '飞书聊天通道',
+      chatIntro: '把飞书里的普通消息转交给一个 DSH 会话，并把 agent 的回复同步回这个飞书会话。',
+      chatEnabled: '启用聊天通道',
+      chatMirror: '把 agent 回复同步回飞书',
+      chatAllowGroups: '允许群聊转发',
+      chatSessionId: '绑定会话 ID（可选）',
+      chatSessionHint: '留空时自动选择最近活跃的 DSH 会话',
       save: '保存配置',
       saving: '保存中…',
       test: '发送测试卡片',
       testing: '发送中…',
       saved: '已保存，配置立即生效',
       tested: '测试卡片已发送，请到飞书查看',
+      chatTest: '聊天自检',
+      chatTesting: '自检中…',
+      chatTested: '自检消息已转交 DSH 会话；agent 的回复会发到飞书',
       hotReload: '热重载插件',
       hotReloading: '重载中…',
       hotReloadRequested: '已请求热重载；插件会短暂重启，稍后刷新状态即可',
@@ -103,12 +113,22 @@ window.__ModuleLoader__.load({
       questions: 'Mirror questions (ask_user_question)',
       approvals: 'Mirror permission approvals',
       watchMessages: 'Answer Feishu text messages (status/help, answers)',
+      chat: 'Feishu chat channel',
+      chatIntro: 'Forward ordinary Feishu messages into a DSH session and mirror the agent replies back to this chat.',
+      chatEnabled: 'Enable chat channel',
+      chatMirror: 'Mirror agent replies to Feishu',
+      chatAllowGroups: 'Allow group chats',
+      chatSessionId: 'Pinned session id (optional)',
+      chatSessionHint: 'Leave blank to use the most recently active DSH session',
       save: 'Save',
       saving: 'Saving…',
       test: 'Send test card',
       testing: 'Sending…',
       saved: 'Saved; the configuration applies immediately',
       tested: 'Test card sent; check Feishu',
+      chatTest: 'Chat self-test',
+      chatTesting: 'Testing…',
+      chatTested: 'Self-test forwarded to a DSH session; the reply will come back here',
       hotReload: 'Hot reload',
       hotReloading: 'Reloading…',
       hotReloadRequested: 'Reload requested; the plugin restarts briefly',
@@ -174,6 +194,7 @@ window.__ModuleLoader__.load({
       const [form, setForm] = React.useState({
         appId: '', appSecret: '', larkCliPath: '', chatName: '', chatId: '', userId: '',
         maxPending: '8', pollIntervalMs: '3000',
+        chatEnabled: true, chatMirror: true, chatAllowGroups: false, chatSessionId: '',
         receive: 'auto', enabled: true, questions: true, approvals: true, watchMessages: true,
       })
 
@@ -185,6 +206,10 @@ window.__ModuleLoader__.load({
           larkCliPath: value.larkCliPath ?? '',
           maxPending: String(value.maxPending ?? 8),
           pollIntervalMs: String(value.pollIntervalMs ?? 3000),
+          chatEnabled: value.chat?.enabled !== false,
+          chatMirror: value.chat?.mirror !== false,
+          chatAllowGroups: value.chat?.allowGroups === true,
+          chatSessionId: value.chat?.sessionId ?? '',
           chatName: value.target?.chatName ?? '',
           chatId: value.target?.chatId ?? '',
           userId: value.target?.userId ?? '',
@@ -227,6 +252,12 @@ window.__ModuleLoader__.load({
               larkCliPath: form.larkCliPath,
               maxPending: Number(form.maxPending),
               pollIntervalMs: Number(form.pollIntervalMs),
+              chat: {
+                enabled: form.chatEnabled,
+                mirror: form.chatMirror,
+                allowGroups: form.chatAllowGroups,
+                sessionId: form.chatSessionId,
+              },
               receive: form.receive,
               target: { chatName: form.chatName, chatId: form.chatId, userId: form.userId },
               bridge: { questions: form.questions, approvals: form.approvals },
@@ -235,6 +266,20 @@ window.__ModuleLoader__.load({
           })
           applyStatus(value.config)
           setNotice(t('saved'))
+        } catch (caught) {
+          setError(String(caught.message ?? caught))
+        } finally {
+          setBusy('')
+        }
+      }
+
+      const chatTest = async () => {
+        setBusy('chat')
+        setNotice('')
+        setError('')
+        try {
+          await request('/chat-selftest', { method: 'POST' })
+          setNotice(t('chatTested'))
         } catch (caught) {
           setError(String(caught.message ?? caught))
         } finally {
@@ -301,6 +346,7 @@ window.__ModuleLoader__.load({
           h('div', { style: styles.actions },
             h('button', { type: 'button', style: styles.secondary, onClick: () => { void load() }, disabled: loading }, t('reload')),
             h('button', { type: 'button', style: styles.secondary, onClick: () => { void sendTest() }, disabled: busy !== '' }, busy === 'test' ? t('testing') : t('test')),
+            h('button', { type: 'button', style: styles.secondary, onClick: () => { void chatTest() }, disabled: busy !== '' }, busy === 'chat' ? t('chatTesting') : t('chatTest')),
             h('button', { type: 'button', style: styles.secondary, onClick: () => { void hotReload() }, disabled: busy !== '' }, busy === 'reload' ? t('hotReloading') : t('hotReload')))),
 
         h('div', { style: styles.card },
@@ -344,6 +390,21 @@ window.__ModuleLoader__.load({
             h('input', { style: styles.input, value: form.chatId, spellCheck: false, onChange: (event) => { update('chatId', event.target.value) } })),
           h(Field, { label: t('userId'), hint: t('userIdHint') },
             h('input', { style: styles.input, value: form.userId, spellCheck: false, onChange: (event) => { update('userId', event.target.value) } }))),
+
+        h('div', { style: styles.card },
+          h('h3', { style: styles.cardTitle }, t('chat')),
+          h('p', { style: styles.hint }, t('chatIntro')),
+          h(Toggle, { label: t('chatEnabled'), checked: form.chatEnabled, onChange: (value) => { update('chatEnabled', value) } }),
+          h(Toggle, { label: t('chatMirror'), checked: form.chatMirror, onChange: (value) => { update('chatMirror', value) } }),
+          h(Toggle, { label: t('chatAllowGroups'), checked: form.chatAllowGroups, onChange: (value) => { update('chatAllowGroups', value) } }),
+          h(Field, { label: t('chatSessionId'), hint: t('chatSessionHint') },
+            h('input', {
+              style: styles.input,
+              value: form.chatSessionId,
+              spellCheck: false,
+              placeholder: 'session-...',
+              onChange: (event) => { update('chatSessionId', event.target.value) },
+            }))),
 
         h('div', { style: styles.card },
           h('h3', { style: styles.cardTitle }, t('advanced')),

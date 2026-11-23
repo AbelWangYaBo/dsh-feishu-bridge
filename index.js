@@ -29,6 +29,7 @@
  *
  * @module dsh-feishu-bridge
  */
+import { randomUUID } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
@@ -82,6 +83,11 @@ const DEFAULTS = {
   pollIntervalMs: 3000,
   /** Slower poll interval that watches for late replies to settled prompts. */
   idlePollIntervalMs: 30000,
+  /**
+   * Feishu ⇄ DSH chat channel: forward Feishu text messages into a live DSH
+   * session and mirror that session's assistant replies back to Feishu.
+   */
+  chat: { enabled: true, sessionId: '', mirror: true, allowGroups: false },
   /** Refuse to mirror more than this many open prompts at once. */
   maxPending: 8,
   /**
@@ -184,6 +190,7 @@ function mergeConfig(rowConfig) {
     if (typeof fileConfig.larkConfigDir === 'string') merged.larkConfigDir = fileConfig.larkConfigDir
     if (typeof fileConfig.receive === 'string') merged.receive = fileConfig.receive
     if (typeof fileConfig.watchMessages === 'boolean') merged.watchMessages = fileConfig.watchMessages
+    merged.chat = { ...merged.chat, ...(fileConfig.chat ?? {}) }
     if (Number.isSafeInteger(fileConfig.pollIntervalMs) && fileConfig.pollIntervalMs >= 500) {
       merged.pollIntervalMs = fileConfig.pollIntervalMs
     }
@@ -223,6 +230,18 @@ function cardContext(agent, ctx) {
   }
 }
 
+/** Plain text of one assistant message, ignoring non-text content blocks. */
+function extractAssistantText(message) {
+  const content = message?.content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter((part) => part !== null && typeof part === 'object' && part.type === 'text' && typeof part.text === 'string')
+    .map((part) => part.text.trim())
+    .filter((text) => text.length > 0)
+    .join('\n')
+    .trim()
+}
+
 /** Recognize the small command vocabulary a Feishu message may carry. */
 function classifyCommand(text) {
   const normalized = String(text ?? '').trim().toLowerCase()
@@ -260,6 +279,7 @@ export class FeishuBridge {
     this.byMessage = new Map()
     this.seenEvents = new Set()
     this.seenMessageIds = new Set()
+    this.chatBindings = new Map()
     this.chatSince = new Map()
     this.seq = 0
     this.injectedLark = lark
@@ -314,6 +334,7 @@ export class FeishuBridge {
       (request, next) => this.onApprovalRequest(request, next),
       { prepend: true },
     )
+    const offSession = this.ctx.on('session/event', (session, event) => { void this.onSessionEvent(session, event) }, { global: true })
     this.configStamp = this.fileStamp()
     this.configTimer = setInterval(() => { void this.checkConfigFile() }, 5000)
     this.configTimer.unref?.()
@@ -322,6 +343,7 @@ export class FeishuBridge {
       this.disposed = true
       offQuestions()
       offApprovals()
+      offSession()
       this.stopConsumer()
       this.stopPolling()
       if (this.retryTimer !== undefined) clearInterval(this.retryTimer)
@@ -631,6 +653,10 @@ export class FeishuBridge {
       bridge: { ...this.config.bridge },
       receive: this.config.receive,
       watchMessages: this.config.watchMessages !== false,
+      chat: {
+        ...(this.config.chat ?? {}),
+        bindings: [...this.chatBindings.entries()].map(([chatId, sessionId]) => ({ chatId, sessionId })),
+      },
       appId: this.config.appId ?? '',
       larkCliPath: this.config.larkCliPath ?? '',
       maxPending: this.config.maxPending,
@@ -1273,6 +1299,7 @@ export class FeishuBridge {
           return
         }
       }
+      if (this.config.chat?.enabled !== false && await this.forwardChatMessage(chatId, chatType, trimmed)) return
       await this.acknowledge(chatId, chatType)
       return
     }
@@ -1290,6 +1317,7 @@ export class FeishuBridge {
       target = eligible.sort((a, b) => a.createdAt - b.createdAt)[0]
     }
     if (target === undefined) {
+      if (this.config.chat?.enabled !== false && await this.forwardChatMessage(chatId, chatType, trimmed)) return
       await this.acknowledge(chatId, chatType)
       return
     }
@@ -1304,6 +1332,129 @@ export class FeishuBridge {
       return
     }
     await this.applyQuestionText(target, body)
+  }
+
+  /** Session title for user-facing text, when the title service is composed. */
+  sessionTitleOf(session) {
+    try {
+      const titles = this.ctx.get('sessionTitle')
+      const snapshot = titles?.get?.(session)
+      return typeof snapshot?.title === 'string' && snapshot.title.length > 0 ? snapshot.title : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /**
+   * Feishu chat -> DSH: forward one plain message into a live session.
+   * Returns false when the channel is disabled or no session can take it, so the
+   * caller can fall back to a plain acknowledgement.
+   */
+  async forwardChatMessage(chatId, chatType, text) {
+    const chat = { enabled: true, sessionId: '', mirror: true, allowGroups: false, ...(this.config.chat ?? {}) }
+    if (chat.enabled === false) return false
+    if (chatType === 'group' && chat.allowGroups !== true) {
+      // Stay silent for ordinary group chatter: only commands and answers reply there.
+      this.log('chat: group message ignored (chat channel disabled for groups)')
+      return true
+    }
+    const sessionController = this.ctx.get('sessionController')
+    if (sessionController === undefined || typeof sessionController.prompt !== 'function') {
+      this.log('chat channel unavailable: no sessionController service')
+      return false
+    }
+    const agent = this.resolveChatBinding(chat, chatId)
+    if (agent === undefined) {
+      await this.replyText(chatId, '当前没有可用的 DSH 会话；请先在 DSH 里打开一个会话再发消息。')
+      return true
+    }
+    const sessionId = agent.session.id
+    const first = this.chatBindings.get(chatId) !== sessionId
+    try {
+      await sessionController.prompt({
+        requestId: randomUUID(),
+        sessionId,
+        mode: 'queue',
+        content: [{ type: 'text', text }],
+      }, new AbortController().signal)
+    } catch (error) {
+      this.log('chat forward failed:', String(error?.message ?? error))
+      await this.replyText(chatId, `转交 DSH 失败：${String(error?.message ?? error)}`)
+      return true
+    }
+    this.chatBindings.set(chatId, sessionId)
+    this.log(`chat: forwarded a Feishu message to session ${sessionId}`)
+    if (first) {
+      const title = this.sessionTitleOf(agent.session) ?? sessionId.slice(0, 12)
+      await this.replyText(chatId, `已连接 DSH 会话「${title}」。之后这里的消息会转交给它，agent 的回复会同步发到这里。`)
+    }
+    return true
+  }
+
+  /** Resolve the session a Feishu chat should talk to: pinned, bound, or newest live root. */
+  resolveChatBinding(chat, chatId) {
+    const agents = this.ctx.get('agents')
+    if (agents === undefined || typeof agents.list !== 'function') return undefined
+    const live = (sessionId) => {
+      const agent = agents.get(sessionId)
+      if (agent === undefined) return undefined
+      return agent.session.header.origin === 'subagent' ? undefined : agent
+    }
+    if (typeof chat.sessionId === 'string' && chat.sessionId.length > 0) {
+      const pinned = live(chat.sessionId)
+      if (pinned !== undefined) return pinned
+      this.log(`chat channel: pinned session ${chat.sessionId} is not live; falling back to the newest live session`)
+    }
+    const boundId = this.chatBindings.get(chatId)
+    if (boundId !== undefined) {
+      const bound = live(boundId)
+      if (bound !== undefined) return bound
+      this.chatBindings.delete(chatId)
+    }
+    let best
+    let bestTime = -1
+    for (const agent of agents.list()) {
+      if (agent.session.header.origin === 'subagent') continue
+      let time = 0
+      try {
+        const events = typeof agent.session.snapshotEvents === 'function' ? agent.session.snapshotEvents() : []
+        if (events.length > 0) time = Number(events[events.length - 1]?.time ?? 0)
+      } catch { /* fall back to registration order */ }
+      if (time >= bestTime) {
+        bestTime = time
+        best = agent
+      }
+    }
+    return best
+  }
+
+  /** Mirror one assistant message from a bound session back to Feishu. */
+  async onSessionEvent(session, event) {
+    if (event?.type !== 'assistant/message') return
+    const chat = { enabled: true, mirror: true, ...(this.config.chat ?? {}) }
+    if (chat.enabled === false || chat.mirror === false) return
+    const chatIds = [...this.chatBindings.entries()]
+      .filter(([, sessionId]) => sessionId === session.id)
+      .map(([chatId]) => chatId)
+    if (chatIds.length === 0) return
+    const text = extractAssistantText(event.data?.message)
+    if (text.length === 0) return
+    this.log(`chat: mirroring an assistant message to ${String(chatIds.length)} Feishu chat(s)`)
+    for (const chatId of chatIds) await this.sendChunked(chatId, text)
+  }
+
+  /** Send long assistant text as several Feishu messages without breaking lines. */
+  async sendChunked(chatId, text, limit = 3000) {
+    const parts = []
+    let rest = text
+    while (rest.length > limit) {
+      let cut = rest.lastIndexOf('\n', limit)
+      if (cut < limit / 2) cut = limit
+      parts.push(rest.slice(0, cut))
+      rest = rest.slice(cut).replace(/^\n/, '')
+    }
+    if (rest.length > 0) parts.push(rest)
+    for (const part of parts) await this.replyText(chatId, part)
   }
 
   /** Tell a human their message arrived but matches nothing (DM only, or when asked). */
@@ -1533,6 +1684,14 @@ export function applyConfigUpdate(raw, body) {
     next.receive = body.receive
   }
   if (typeof body.watchMessages === 'boolean') next.watchMessages = body.watchMessages
+  if (body.chat !== null && typeof body.chat === 'object') {
+    const chat = { ...(next.chat ?? {}) }
+    for (const key of ['enabled', 'mirror', 'allowGroups']) {
+      if (typeof body.chat[key] === 'boolean') chat[key] = body.chat[key]
+    }
+    if (typeof body.chat.sessionId === 'string') chat.sessionId = body.chat.sessionId.trim()
+    next.chat = chat
+  }
   if (body.bridge !== null && typeof body.bridge === 'object') {
     const bridge = { questions: true, approvals: true, ...(raw.bridge ?? {}) }
     if (typeof body.bridge.questions === 'boolean') bridge.questions = body.bridge.questions
@@ -1635,6 +1794,39 @@ function registerSettingsRoutes(ctx, bridge, log) {
       )
     }, 150)
   }
+  const chatTestHandler = async (req, res) => {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'method not allowed' })
+      return
+    }
+    try {
+      if ((bridge.config.chat ?? {}).enabled === false) throw new Error('聊天通道未启用')
+      const known = [...bridge.chatSince.keys()]
+      let chatId = bridge.config.target?.chatId || known[known.length - 1]
+      if (typeof chatId !== 'string' || chatId.length === 0) {
+        // Learn the DM chat id by sending one short card to the configured target.
+        const probe = await bridge.lark.sendCard(
+          buildNoticeCard({ title: 'DSH 飞书桥接', content: '正在准备聊天通道自检…' }),
+          bridge.target(),
+        )
+        chatId = probe.chatId
+        if (typeof chatId !== 'string' || chatId.length === 0) {
+          const message = await bridge.lark.getMessage(probe.messageId)
+          chatId = message?.chatId
+        }
+        if (typeof chatId === 'string' && chatId.length > 0) bridge.chatSince.set(chatId, 0)
+      }
+      if (typeof chatId !== 'string' || chatId.length === 0) {
+        throw new Error('找不到飞书会话；请先点「发送测试卡片」确认目标可用')
+      }
+      const text = '【DSH 飞书桥接自检】这是一条聊天通道自检消息，请简短回复一句即可。'
+      const forwarded = await bridge.forwardChatMessage(chatId, 'p2p', text)
+      if (!forwarded) throw new Error('转发失败：没有可用的 DSH 会话或聊天通道未启用')
+      sendJson(res, 200, { ok: true, chatId, sessionId: bridge.chatBindings.get(chatId) ?? '' })
+    } catch (error) {
+      sendJson(res, 200, { ok: false, error: String(error?.message ?? error) })
+    }
+  }
   const helloHandler = async (req, res) => {
     if (req.method !== 'POST') {
       sendJson(res, 405, { ok: false, error: 'method not allowed' })
@@ -1648,6 +1840,7 @@ function registerSettingsRoutes(ctx, bridge, log) {
     ['/api/feishu-bridge/test-card', testHandler],
     ['/api/feishu-bridge/hello', helloHandler],
     ['/api/feishu-bridge/reload', reloadHandler],
+    ['/api/feishu-bridge/chat-selftest', chatTestHandler],
   ].map(([path, handler]) => webServer.register({ kind: 'exact', path, handler }))
   return () => {
     for (const dispose of disposers) {
