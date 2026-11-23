@@ -87,7 +87,7 @@ const DEFAULTS = {
    * Feishu ⇄ DSH chat channel: forward Feishu text messages into a live DSH
    * session and mirror that session's assistant replies back to Feishu.
    */
-  chat: { enabled: true, sessionId: '', mirror: true, allowGroups: false },
+  chat: { enabled: true, sessionId: '', mirror: true, allowGroups: false, cwd: '' },
   /** Refuse to mirror more than this many open prompts at once. */
   maxPending: 8,
   /**
@@ -248,6 +248,7 @@ function classifyCommand(text) {
   if (['状态', 'status', '查看状态'].includes(normalized)) return 'status'
   if (['帮助', 'help', '?', '？', '使用说明'].includes(normalized)) return 'help'
   if (['ping', 'pong'].includes(normalized)) return 'ping'
+  if (['项目', '当前项目', 'pwd', 'project'].includes(normalized)) return 'project'
   return undefined
 }
 
@@ -1281,7 +1282,7 @@ export class FeishuBridge {
     const trimmed = text.trim()
     const command = classifyCommand(trimmed)
     if (command !== undefined) {
-      await this.replyText(chatId, this.commandReply(command))
+      await this.replyText(chatId, this.commandReply(command, chatId))
       return
     }
     const pending = [...this.prompts.values()]
@@ -1363,12 +1364,20 @@ export class FeishuBridge {
       this.log('chat channel unavailable: no sessionController service')
       return false
     }
-    const agent = this.resolveChatBinding(chat, chatId)
-    if (agent === undefined) {
-      await this.replyText(chatId, '当前没有可用的 DSH 会话；请先在 DSH 里打开一个会话再发消息。')
+    let target
+    try {
+      target = await this.resolveChatTarget(chat, chatId)
+    } catch (error) {
+      this.log('chat target resolution failed:', String(error?.message ?? error))
+      await this.replyText(chatId, `无法选择 DSH 会话：${String(error?.message ?? error)}`)
       return true
     }
-    const sessionId = agent.session.id
+    if (target === undefined) {
+      await this.replyText(chatId, '当前没有可用的 DSH 会话；请先在 DSH 里打开一个会话，或在设置里填写「聊天项目目录」。')
+      return true
+    }
+    const sessionId = target.sessionId
+    const agent = target.agent
     const first = this.chatBindings.get(chatId) !== sessionId
     try {
       await sessionController.prompt({
@@ -1385,7 +1394,7 @@ export class FeishuBridge {
     this.chatBindings.set(chatId, sessionId)
     this.log(`chat: forwarded a Feishu message to session ${sessionId}`)
     if (first) {
-      const title = this.sessionTitleOf(agent.session) ?? sessionId.slice(0, 12)
+      const title = (agent === undefined ? undefined : this.sessionTitleOf(agent.session)) ?? sessionId.slice(0, 12)
       await this.replyText(chatId, `已连接 DSH 会话「${title}」。之后这里的消息会转交给它，agent 的回复会同步发到这里。`)
     }
     return true
@@ -1428,6 +1437,60 @@ export class FeishuBridge {
     return best
   }
 
+  /**
+   * Resolve the session for one chat message. A configured project directory
+   * wins: use a live session there, otherwise create one; without it fall back
+   * to pinned/bound/newest live session.
+   */
+  async resolveChatTarget(chat, chatId) {
+    const agents = this.ctx.get('agents')
+    if (agents === undefined || typeof agents.list !== 'function') return undefined
+    const wantedCwd = typeof chat.cwd === 'string' ? chat.cwd.trim() : ''
+    if (wantedCwd.length > 0) {
+      const found = this.findLiveSessionForCwd(agents, wantedCwd)
+      if (found !== undefined) return { agent: found, sessionId: found.session.id }
+      const sessionController = this.ctx.get('sessionController')
+      if (sessionController === undefined || typeof sessionController.create !== 'function') {
+        throw new Error('当前 DSH 无法创建会话')
+      }
+      const created = await sessionController.create({ cwd: wantedCwd })
+      this.log(`chat: created a DSH session in ${wantedCwd} (${created.sessionId})`)
+      return { agent: agents.get(created.sessionId), sessionId: created.sessionId }
+    }
+    const agent = this.resolveChatBinding(chat, chatId)
+    return agent === undefined ? undefined : { agent, sessionId: agent.session.id }
+  }
+
+  /** Newest live root session whose working directory equals one path. */
+  findLiveSessionForCwd(agents, cwd) {
+    const normalized = cwd.replace(/[\\/]+$/, '')
+    let best
+    let bestTime = -1
+    for (const agent of agents.list()) {
+      if (agent.session.header.origin === 'subagent') continue
+      const sessionCwd = typeof agent.session.header.cwd === 'string'
+        ? agent.session.header.cwd.replace(/[\\/]+$/, '')
+        : ''
+      if (sessionCwd !== normalized) continue
+      const time = this.sessionRecency(agent)
+      if (time >= bestTime) {
+        bestTime = time
+        best = agent
+      }
+    }
+    return best
+  }
+
+  /** Last-event timestamp of a live session, used to choose the most recent one. */
+  sessionRecency(agent) {
+    try {
+      const events = typeof agent.session.snapshotEvents === 'function' ? agent.session.snapshotEvents() : []
+      return events.length > 0 ? Number(events[events.length - 1]?.time ?? 0) : 0
+    } catch {
+      return 0
+    }
+  }
+
   /** Mirror one assistant message from a bound session back to Feishu. */
   async onSessionEvent(session, event) {
     if (event?.type !== 'assistant/message') return
@@ -1464,8 +1527,22 @@ export class FeishuBridge {
   }
 
   /** Reply text for one recognized command. */
-  commandReply(command) {
+  commandReply(command, chatId) {
     if (command === 'ping') return 'pong'
+    if (command === 'project') {
+      const chat = { ...(this.config.chat ?? {}) }
+      const sessionId = this.chatBindings.get(chatId) ?? (chat.sessionId || '')
+      const agents = this.ctx.get('agents')
+      const agent = sessionId.length > 0 && agents !== undefined ? agents.get(sessionId) : undefined
+      const cwd = agent?.session?.header?.cwd
+      const title = agent === undefined ? undefined : this.sessionTitleOf(agent.session)
+      return [
+        'DSH 飞书聊天项目',
+        `· 项目目录：${typeof cwd === 'string' && cwd.length > 0 ? cwd : (chat.cwd || '跟随最近活跃会话')}`,
+        `· 会话：${sessionId.length > 0 ? sessionId : '尚未绑定（发一条普通消息即可绑定）'}`,
+        `· 会话标题：${title ?? '（未生成）'}`,
+      ].join('\n')
+    }
     if (command === 'help') {
       return [
         'DSH 飞书桥接用法：',
@@ -1690,6 +1767,7 @@ export function applyConfigUpdate(raw, body) {
       if (typeof body.chat[key] === 'boolean') chat[key] = body.chat[key]
     }
     if (typeof body.chat.sessionId === 'string') chat.sessionId = body.chat.sessionId.trim()
+    if (typeof body.chat.cwd === 'string') chat.cwd = body.chat.cwd.trim()
     next.chat = chat
   }
   if (body.bridge !== null && typeof body.bridge === 'object') {

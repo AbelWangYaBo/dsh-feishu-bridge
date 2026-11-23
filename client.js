@@ -59,6 +59,8 @@ window.__ModuleLoader__.load({
       chatAllowGroups: '允许群聊转发',
       chatSessionId: '绑定会话 ID（可选）',
       chatSessionHint: '留空时自动选择最近活跃的 DSH 会话',
+      chatCwd: '聊天项目目录（可选）',
+      chatCwdHint: '填写后优先使用该目录下的会话，没有则自动新建；留空则跟随最近活跃会话',
       save: '保存配置',
       saving: '保存中…',
       test: '发送测试卡片',
@@ -120,6 +122,8 @@ window.__ModuleLoader__.load({
       chatAllowGroups: 'Allow group chats',
       chatSessionId: 'Pinned session id (optional)',
       chatSessionHint: 'Leave blank to use the most recently active DSH session',
+      chatCwd: 'Chat project directory (optional)',
+      chatCwdHint: 'Prefer a session in this directory, creating one if needed; leave blank to follow the most recently active session',
       save: 'Save',
       saving: 'Saving…',
       test: 'Send test card',
@@ -194,7 +198,7 @@ window.__ModuleLoader__.load({
       const [form, setForm] = React.useState({
         appId: '', appSecret: '', larkCliPath: '', chatName: '', chatId: '', userId: '',
         maxPending: '8', pollIntervalMs: '3000',
-        chatEnabled: true, chatMirror: true, chatAllowGroups: false, chatSessionId: '',
+        chatEnabled: true, chatMirror: true, chatAllowGroups: false, chatSessionId: '', chatCwd: '',
         receive: 'auto', enabled: true, questions: true, approvals: true, watchMessages: true,
       })
 
@@ -210,6 +214,7 @@ window.__ModuleLoader__.load({
           chatMirror: value.chat?.mirror !== false,
           chatAllowGroups: value.chat?.allowGroups === true,
           chatSessionId: value.chat?.sessionId ?? '',
+          chatCwd: value.chat?.cwd ?? '',
           chatName: value.target?.chatName ?? '',
           chatId: value.target?.chatId ?? '',
           userId: value.target?.userId ?? '',
@@ -257,6 +262,7 @@ window.__ModuleLoader__.load({
                 mirror: form.chatMirror,
                 allowGroups: form.chatAllowGroups,
                 sessionId: form.chatSessionId,
+                cwd: form.chatCwd,
               },
               receive: form.receive,
               target: { chatName: form.chatName, chatId: form.chatId, userId: form.userId },
@@ -397,6 +403,14 @@ window.__ModuleLoader__.load({
           h(Toggle, { label: t('chatEnabled'), checked: form.chatEnabled, onChange: (value) => { update('chatEnabled', value) } }),
           h(Toggle, { label: t('chatMirror'), checked: form.chatMirror, onChange: (value) => { update('chatMirror', value) } }),
           h(Toggle, { label: t('chatAllowGroups'), checked: form.chatAllowGroups, onChange: (value) => { update('chatAllowGroups', value) } }),
+          h(Field, { label: t('chatCwd'), hint: t('chatCwdHint') },
+            h('input', {
+              style: styles.input,
+              value: form.chatCwd,
+              spellCheck: false,
+              placeholder: '留空跟随最近活跃会话',
+              onChange: (event) => { update('chatCwd', event.target.value) },
+            })),
           h(Field, { label: t('chatSessionId'), hint: t('chatSessionHint') },
             h('input', {
               style: styles.input,

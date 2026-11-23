@@ -29,11 +29,11 @@ class StubLark {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-function makeAgent(id, time, title) {
+function makeAgent(id, time, title, cwd = '/workspace') {
   return {
     session: {
       id,
-      header: { cwd: '/workspace', origin: 'main' },
+      header: { cwd, origin: 'main' },
       snapshotEvents: () => [{ time }],
       title,
     },
@@ -43,10 +43,17 @@ function makeAgent(id, time, title) {
 function makeBridge({ agents = [], chat = {}, allowOperators = ['ou_me'] } = {}) {
   const lark = new StubLark()
   const requests = []
+  const createRequests = []
   const sessionController = {
     prompt: async (request) => {
       requests.push(request)
       return { accepted: true }
+    },
+    create: async (request) => {
+      createRequests.push(request)
+      const agent = makeAgent('session-created', 999, undefined, request.cwd)
+      agents.push(agent)
+      return { sessionId: agent.session.id }
     },
   }
   const registry = {
@@ -84,7 +91,7 @@ function makeBridge({ agents = [], chat = {}, allowOperators = ['ou_me'] } = {})
   })
   bridge.mode = 'callback'
   bridge.ready = true
-  return { bridge, lark, requests, registry }
+  return { bridge, lark, requests, createRequests, registry }
 }
 
 const dm = (text, messageId = `om_${String(Date.now())}_${String(seq++)}`) => ({
@@ -207,6 +214,38 @@ const dm = (text, messageId = `om_${String(Date.now())}_${String(seq++)}`) => ({
   const result = await promise
   assert.deepEqual(result, { answers: [{ id: 'q1', selected: ['停止'] }] })
   assert.equal(requests.length, 0, 'a prompt answer must not be forwarded as chat')
+}
+
+// A configured project directory without a live session creates one there.
+{
+  const { bridge, lark, requests, createRequests } = makeBridge({ agents: [], chat: { cwd: '/projects/foo' } })
+  await bridge.handleIncomingText(dm('这个项目的构建脚本在哪？'))
+  assert.deepEqual(createRequests, [{ cwd: '/projects/foo' }])
+  assert.equal(requests.length, 1)
+  assert.equal(requests[0].sessionId, 'session-created')
+  assert.ok(String(lark.texts.at(-1).text).includes('已连接 DSH 会话'))
+  assert.equal(bridge.chatBindings.get('oc_dm'), 'session-created')
+}
+
+// An existing live session in that directory is reused instead of creating one.
+{
+  const projectAgent = makeAgent('session-project', 700, '项目会话', '/projects/foo')
+  const other = makeAgent('session-other', 900, '其他会话', '/elsewhere')
+  const { bridge, requests, createRequests } = makeBridge({ agents: [projectAgent, other], chat: { cwd: '/projects/foo/' } })
+  await bridge.handleIncomingText(dm('继续这个项目'))
+  assert.equal(createRequests.length, 0, 'a live session in the directory is reused')
+  assert.equal(requests[0].sessionId, 'session-project')
+}
+
+// The project command reports the bound session's directory.
+{
+  const projectAgent = makeAgent('session-project', 700, '项目会话', '/projects/foo')
+  const { bridge, lark } = makeBridge({ agents: [projectAgent], chat: { cwd: '/projects/foo' } })
+  await bridge.handleIncomingText(dm('hi'))
+  await bridge.handleIncomingText(dm('项目'))
+  const reply = String(lark.texts.at(-1).text)
+  assert.ok(reply.includes('/projects/foo'), 'reply shows the project directory')
+  assert.ok(reply.includes('session-project'), 'reply shows the bound session')
 }
 
 console.log('chat channel tests passed')
