@@ -87,7 +87,7 @@ const DEFAULTS = {
    * Feishu ⇄ DSH chat channel: forward Feishu text messages into a live DSH
    * session and mirror that session's assistant replies back to Feishu.
    */
-  chat: { enabled: true, sessionId: '', mirror: true, allowGroups: false, cwd: '' },
+  chat: { enabled: false, sessionId: '', mirror: true, allowGroups: false, cwd: '' },
   /** Refuse to mirror more than this many open prompts at once. */
   maxPending: 8,
   /**
