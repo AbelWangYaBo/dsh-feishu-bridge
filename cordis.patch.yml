@@ -1,0 +1,9 @@
+# dsh-feishu-bridge bundle patch: one Host row plus the browser settings page.
+#
+# The row's config is intentionally empty: App ID / Secret, the delivery target,
+# and the switches are edited on the plugin's Settings page and persisted in
+# ~/.dsh/feishu-bridge.json (or the path in this row's `configFile`).
+- insert:
+    - id: feishu-bridge
+      name: 'dsh-feishu-bridge'
+      config: {}

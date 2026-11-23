@@ -1,0 +1,7 @@
+{
+  "meta": {
+    "title": "Feishu confirmations",
+    "description": "Mirror DSH human confirmations (question options and permission approvals) into Feishu cards/messages so you can answer away from the computer. Desktop and Feishu race for the first submission; the other side is told the request is complete or expired. A settings page holds the app ID/secret, delivery target, and receive mode, so anyone can install the plugin and configure their own app.",
+    "detail": "docs/DETAIL.md"
+  }
+}
