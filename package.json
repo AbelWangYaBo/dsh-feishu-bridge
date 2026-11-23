@@ -1,6 +1,6 @@
 {
   "name": "dsh-feishu-bridge",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "private": true,
   "description": "Mirror DSH human confirmations into Feishu cards/messages; the first submission from desktop or Feishu wins.",
   "type": "module",

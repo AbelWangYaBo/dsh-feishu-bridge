@@ -249,6 +249,7 @@ function classifyCommand(text) {
   if (['帮助', 'help', '?', '？', '使用说明'].includes(normalized)) return 'help'
   if (['ping', 'pong'].includes(normalized)) return 'ping'
   if (['项目', '当前项目', 'pwd', 'project'].includes(normalized)) return 'project'
+  if (['取消绑定', '解绑', 'unbind'].includes(normalized)) return 'unbind'
   return undefined
 }
 
@@ -281,6 +282,7 @@ export class FeishuBridge {
     this.seenEvents = new Set()
     this.seenMessageIds = new Set()
     this.chatBindings = new Map()
+    this.lastPromptSessionId = undefined
     this.chatSince = new Map()
     this.seq = 0
     this.injectedLark = lark
@@ -856,6 +858,7 @@ export class FeishuBridge {
       entry.chatId = chatId ?? entry.chatId
       this.byMessage.set(messageId, entry)
       this.log(`prompt ${entry.id} question card sent (${messageId}, mode=${this.mode})`)
+      if (entry.agent?.session?.header?.origin !== 'subagent') this.lastPromptSessionId = entry.agent.session.id
       await this.ensureChatBaseline(entry)
       if (entry.settledState !== undefined) this.applySettledCard(entry, entry.settledState, entry.settledValue)
     } catch (error) {
@@ -889,6 +892,7 @@ export class FeishuBridge {
       entry.chatId = chatId ?? entry.chatId
       this.byMessage.set(messageId, entry)
       this.log(`prompt ${entry.id} approval card sent (${messageId}, mode=${this.mode})`)
+      if (entry.agent?.session?.header?.origin !== 'subagent') this.lastPromptSessionId = entry.agent.session.id
       await this.ensureChatBaseline(entry)
       if (entry.settledState !== undefined) this.applySettledCard(entry, entry.settledState, entry.settledValue)
     } catch (error) {
@@ -1378,6 +1382,7 @@ export class FeishuBridge {
     }
     const sessionId = target.sessionId
     const agent = target.agent
+    const busy = agent === undefined ? false : this.sessionBusy(agent)
     const first = this.chatBindings.get(chatId) !== sessionId
     try {
       await sessionController.prompt({
@@ -1395,7 +1400,10 @@ export class FeishuBridge {
     this.log(`chat: forwarded a Feishu message to session ${sessionId}`)
     if (first) {
       const title = (agent === undefined ? undefined : this.sessionTitleOf(agent.session)) ?? sessionId.slice(0, 12)
-      await this.replyText(chatId, `已连接 DSH 会话「${title}」。之后这里的消息会转交给它，agent 的回复会同步发到这里。`)
+      const suffix = busy ? '（该会话正在处理其他任务，消息会排队等待）' : ''
+      await this.replyText(chatId, `已连接 DSH 会话「${title}」${suffix}。之后这里的消息会转交给它，agent 的回复会同步发到这里。`)
+    } else if (busy) {
+      await this.replyText(chatId, '目标会话正在处理其他任务，消息已排队，处理完会回复到这里。')
     }
     return true
   }
@@ -1420,21 +1428,43 @@ export class FeishuBridge {
       if (bound !== undefined) return bound
       this.chatBindings.delete(chatId)
     }
-    let best
-    let bestTime = -1
+    // Prefer the session that last asked the human through Feishu.
+    if (this.lastPromptSessionId !== undefined) {
+      const prompting = live(this.lastPromptSessionId)
+      if (prompting !== undefined) return prompting
+    }
+    // Then the newest idle session; a busy session would only queue the message.
+    let idleBest
+    let idleTime = -1
+    let busyBest
+    let busyTime = -1
     for (const agent of agents.list()) {
       if (agent.session.header.origin === 'subagent') continue
-      let time = 0
-      try {
-        const events = typeof agent.session.snapshotEvents === 'function' ? agent.session.snapshotEvents() : []
-        if (events.length > 0) time = Number(events[events.length - 1]?.time ?? 0)
-      } catch { /* fall back to registration order */ }
-      if (time >= bestTime) {
-        bestTime = time
-        best = agent
+      const time = this.sessionRecency(agent)
+      if (this.sessionBusy(agent)) {
+        if (time >= busyTime) {
+          busyTime = time
+          busyBest = agent
+        }
+      } else if (time >= idleTime) {
+        idleTime = time
+        idleBest = agent
       }
     }
-    return best
+    return idleBest ?? busyBest
+  }
+
+  /** Whether the session has an open turn (a queued prompt would only wait). */
+  sessionBusy(agent) {
+    try {
+      const events = typeof agent.session.snapshotEvents === 'function' ? agent.session.snapshotEvents() : []
+      for (let index = events.length - 1; index >= 0; index -= 1) {
+        const type = events[index]?.type
+        if (type === 'turn/end') return false
+        if (type === 'turn/start') return true
+      }
+    } catch { /* unknown -> treat as idle */ }
+    return false
   }
 
   /**
@@ -1529,6 +1559,10 @@ export class FeishuBridge {
   /** Reply text for one recognized command. */
   commandReply(command, chatId) {
     if (command === 'ping') return 'pong'
+    if (command === 'unbind') {
+      this.chatBindings.delete(chatId)
+      return '已解除本飞书会话的 DSH 会话绑定；下一条消息会重新选择会话（可在设置页固定项目目录或绑定会话 ID）。'
+    }
     if (command === 'project') {
       const chat = { ...(this.config.chat ?? {}) }
       const sessionId = this.chatBindings.get(chatId) ?? (chat.sessionId || '')

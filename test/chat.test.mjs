@@ -29,12 +29,15 @@ class StubLark {
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-function makeAgent(id, time, title, cwd = '/workspace') {
+function makeAgent(id, time, title, cwd = '/workspace', busy = false) {
   return {
     session: {
       id,
       header: { cwd, origin: 'main' },
-      snapshotEvents: () => [{ time }],
+      snapshotEvents: () => [
+        { time, type: 'step/start' },
+        busy ? { time, type: 'turn/start' } : { time, type: 'turn/end' },
+      ],
       title,
     },
   }
@@ -246,6 +249,47 @@ const dm = (text, messageId = `om_${String(Date.now())}_${String(seq++)}`) => ({
   const reply = String(lark.texts.at(-1).text)
   assert.ok(reply.includes('/projects/foo'), 'reply shows the project directory')
   assert.ok(reply.includes('session-project'), 'reply shows the bound session')
+}
+
+// A busy newest session is skipped in favour of an older idle one.
+{
+  const busy = makeAgent('session-new-busy', 900, '忙会话', '/workspace', true)
+  const idle = makeAgent('session-old-idle', 300, '空闲会话')
+  const { bridge, requests, lark } = makeBridge({ agents: [busy, idle] })
+  await bridge.handleIncomingText(dm('hello idle'))
+  assert.equal(requests[0].sessionId, 'session-old-idle')
+  assert.equal(bridge.chatBindings.get('oc_dm'), 'session-old-idle')
+}
+
+// When only a busy session exists the user is told the message was queued.
+{
+  const busy = makeAgent('session-new-busy', 900, '忙会话', '/workspace', true)
+  const { bridge, requests, lark } = makeBridge({ agents: [busy] })
+  await bridge.handleIncomingText(dm('hello busy'))
+  assert.equal(requests[0].sessionId, 'session-new-busy')
+  assert.ok(String(lark.texts.at(-1).text).includes('排队'))
+}
+
+// The session that last asked through Feishu is preferred over newer idle ones.
+{
+  const prompting = makeAgent('session-asked', 100, '问过你的会话')
+  const newer = makeAgent('session-newer', 900, '更新的会话')
+  const { bridge, requests } = makeBridge({ agents: [prompting, newer] })
+  bridge.lastPromptSessionId = 'session-asked'
+  await bridge.handleIncomingText(dm('继续刚才那个'))
+  assert.equal(requests[0].sessionId, 'session-asked')
+}
+
+// 解绑 drops the current binding so the next message re-selects a session.
+{
+  const first = makeAgent('session-a', 500, 'A')
+  const second = makeAgent('session-b', 700, 'B')
+  const { bridge, lark, requests } = makeBridge({ agents: [first, second] })
+  await bridge.handleIncomingText(dm('第一条'))
+  assert.equal(requests[0].sessionId, 'session-b')
+  await bridge.handleIncomingText(dm('解绑'))
+  assert.ok(String(lark.texts.at(-1).text).includes('已解除'))
+  assert.equal(bridge.chatBindings.has('oc_dm'), false)
 }
 
 console.log('chat channel tests passed')
