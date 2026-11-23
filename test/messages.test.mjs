@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { FeishuBridge } from '../index.js'
 
 let seq = 0
@@ -114,7 +116,7 @@ const userEvent = (text, messageId, overrides = {}) => ({
   const desktop = new Promise(() => {})
   const request = {
     questions: [{ id: 'q1', header: '选择', question: '继续吗？', options: [{ label: '继续' }, { label: '停止' }] }],
-    agent: { session: { id: 'session-msg', header: { cwd: '/tmp/w' } } },
+    agent: { session: { id: 'session-msg', header: { cwd: join(tmpdir(), 'w') } } },
     signal: new AbortController().signal,
   }
   const promise = bridge.onQuestionRequest(request, () => desktop)

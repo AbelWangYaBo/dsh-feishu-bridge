@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { FeishuBridge } from '../index.js'
@@ -28,7 +29,7 @@ class StubLark {
   async sendText() {}
 }
 
-const dir = join('/tmp', `dsh-bridge-reload-${String(Date.now())}`)
+const dir = join(tmpdir(), `dsh-bridge-reload-${String(Date.now())}`)
 rmSync(dir, { recursive: true, force: true })
 mkdirSync(dir, { recursive: true })
 const configPath = join(dir, 'feishu-bridge.json')

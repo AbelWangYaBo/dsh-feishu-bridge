@@ -632,6 +632,9 @@ export class FeishuBridge {
       receive: this.config.receive,
       watchMessages: this.config.watchMessages !== false,
       appId: this.config.appId ?? '',
+      larkCliPath: this.config.larkCliPath ?? '',
+      maxPending: this.config.maxPending,
+      pollIntervalMs: this.config.pollIntervalMs,
       secretConfigured: typeof this.config.appSecret === 'string' && this.config.appSecret.length > 0,
       configFile: this.config.file,
     }
@@ -1486,6 +1489,11 @@ export function applyConfigUpdate(raw, body) {
   const next = { ...raw }
   if (typeof body.enabled === 'boolean') next.enabled = body.enabled
   const previousAppId = typeof raw.appId === 'string' ? raw.appId.trim() : ''
+  if (typeof body.larkCliPath === 'string') {
+    const cliPath = body.larkCliPath.trim()
+    if (cliPath.length > 0) next.larkCliPath = cliPath
+    else delete next.larkCliPath
+  }
   if (typeof body.appId === 'string') {
     const appId = body.appId.trim()
     if (appId.length > 0) next.appId = appId
@@ -1512,6 +1520,14 @@ export function applyConfigUpdate(raw, body) {
   }
   if (body.appSecret === null) delete next.appSecret
   else if (typeof body.appSecret === 'string' && body.appSecret.trim().length > 0) next.appSecret = body.appSecret.trim()
+  for (const [key, min, max] of [['maxPending', 1, 64], ['pollIntervalMs', 500, 600_000]]) {
+    if (body[key] === undefined) continue
+    const value = Number(body[key])
+    if (!Number.isSafeInteger(value) || value < min || value > max) {
+      throw new Error(`${key} 必须是 ${String(min)}-${String(max)} 之间的整数`)
+    }
+    next[key] = value
+  }
   if (typeof body.receive === 'string') {
     if (!RECEIVE_MODES.has(body.receive)) throw new Error('receive 必须是 auto / poll / callback')
     next.receive = body.receive

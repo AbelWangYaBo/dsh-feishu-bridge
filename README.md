@@ -9,7 +9,9 @@ DeepSeek Harness（DSH）插件：把 `ask_user_question` 的选项与权限审�
 ## 依赖
 
 - DSH Desktop（或在同一安装上运行的 DSH Web profile）；
-- 本机安装并已配置 `lark-cli`（插件通过它调用飞书 OpenAPI）；
+- 本机安装并已配置 `lark-cli`（插件通过它调用飞书 OpenAPI）。
+  - 支持 macOS / Linux / Windows；插件不含任何硬编码的机器路径，默认从 `PATH` 查找 `lark-cli`，找不到时可在设置页填写完整路径（Windows 建议填 `lark-cli.exe`，也兼容 `.cmd` shim）；
+  - 配置目录、日志都基于 `$DSH_HOME`（缺省为当前用户的 `~/.dsh`），不写死任何绝对路径；
 - 一个飞书自建应用（机器人能力 + `im:message`、`im:message:update`、`im:message:readonly` 权限；建议发布 `card.action.trigger` 回调与 `im.message.receive_v1` 事件，均用长连接）。
 - 首次安装后重启一次 DSH 让设置页加载；之后改配置不需要重启。
 
@@ -17,7 +19,7 @@ DeepSeek Harness（DSH）插件：把 `ask_user_question` 的选项与权限审�
 
 1. 把本目录（或 `dsh-feishu-bridge-*.tgz`）通过 DSH「插件 → 添加插件」安装并启用；
 2. 重启一次 DSH；
-3. 打开 **设置 → 飞书桥接**（或左侧栏入口），填 App ID / App Secret、目标群名或私聊 open_id，保存；
+3. 打开 **设置 → 飞书桥接**（或左侧栏入口），填 App ID / App Secret、目标群名或私聊 open_id（高级项与 lark-cli 路径也在同一页），保存；
 4. 点「发送测试卡片」确认飞书收到；详细配置与限制见 [docs/DETAIL.md](docs/DETAIL.md)、[docs/HANDOFF.md](docs/HANDOFF.md)。
 
 ## 文件

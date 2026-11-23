@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
 import { existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { FeishuBridge } from '../index.js'
@@ -52,7 +53,7 @@ class StubLark {
   }
 }
 
-const dir = join('/tmp', `dsh-bridge-isolation-${String(Date.now())}`)
+const dir = join(tmpdir(), `dsh-bridge-isolation-${String(Date.now())}`)
 rmSync(dir, { recursive: true, force: true })
 mkdirSync(dir, { recursive: true })
 const logs = []

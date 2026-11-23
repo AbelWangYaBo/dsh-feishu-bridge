@@ -20,7 +20,7 @@ if (options === undefined || target.userId === '' || !sendsEnabled()) {
   process.exit(0)
 }
 
-const fileLog = createFileLogger('/tmp/feishu-bridge-live-late.log')
+const fileLog = createFileLogger(join(tmpdir(), 'feishu-bridge-live-late.log'))
 const logs = []
 const log = (...parts) => {
   const line = parts.join(' ')
@@ -55,7 +55,7 @@ const bridge = new FeishuBridge({
 bridge.mode = 'poll'
 bridge.ready = true
 
-const agent = { session: { id: 'session-live-late', header: { cwd: '/tmp/live-late' } } }
+const agent = { session: { id: 'session-live-late', header: { cwd: join(tmpdir(), 'live-late') } } }
 const request = {
   questions: [{
     id: 'q1',

@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { FeishuBridge } from '../index.js'
 
 let seq = 0
@@ -53,7 +55,7 @@ function makeBridge(config) {
   return { bridge, lark }
 }
 
-const agent = { session: { id: 'session-inj', header: { cwd: '/tmp/w' } } }
+const agent = { session: { id: 'session-inj', header: { cwd: join(tmpdir(), 'w') } } }
 const request = {
   questions: [{ id: 'q1', question: '继续吗？', options: [{ label: '继续' }, { label: '停止' }] }],
   agent,

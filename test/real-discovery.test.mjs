@@ -2,6 +2,8 @@
  * Real-API target-discovery check: list the bot's group chats and resolve one by
  * name, exactly as the plugin does when only app credentials are configured.
  */
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { FeishuBridge } from '../index.js'
 import { LarkCli, createFileLogger, resolveLarkCli } from '../lib/lark.js'
 import { configuredCliOptions } from './helpers/app-config.mjs'
@@ -12,7 +14,7 @@ if (cliOptions === undefined) {
   process.exit(0)
 }
 
-const fileLog = createFileLogger('/tmp/feishu-bridge-real-discovery.log')
+const fileLog = createFileLogger(join(tmpdir(), 'feishu-bridge-real-discovery.log'))
 const logs = []
 const log = (...parts) => {
   const line = parts.join(' ')

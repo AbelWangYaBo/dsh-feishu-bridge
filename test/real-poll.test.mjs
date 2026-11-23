@@ -27,7 +27,7 @@ const log = (...parts) => {
   logs.push(line)
   console.log('[bridge]', line)
 }
-const fileLog = createFileLogger('/tmp/feishu-bridge-real-poll.log')
+const fileLog = createFileLogger(join(tmpdir(), 'feishu-bridge-real-poll.log'))
 const lark = new LarkCli({
   bin: resolveLarkCli(undefined),
   log: (line) => { fileLog(line); log(line) },
@@ -71,7 +71,7 @@ bridge.mode = 'poll'
 bridge.ready = true
 bridge.stopPolling()
 
-const agent = { session: { id: 'session-e2e', header: { cwd: '/tmp/e2e-workspace' } } }
+const agent = { session: { id: 'session-e2e', header: { cwd: join(tmpdir(), 'e2e-workspace') } } }
 const request = {
   questions: [{
     id: 'q1',

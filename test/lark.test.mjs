@@ -8,7 +8,7 @@ if (options === undefined || (target.userId === '' && target.chatId === '') || !
   console.log('SKIP lark adapter test: needs a configured app and BRIDGE_TEST_SEND=1 (it sends real messages)')
   process.exit(0)
 }
-const log = createFileLogger('/tmp/feishu-bridge-test.log')
+const log = createFileLogger(join(tmpdir(), 'feishu-bridge-test.log'))
 const lark = new LarkCli({
   bin: resolveLarkCli(undefined),
   log,

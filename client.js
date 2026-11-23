@@ -37,6 +37,11 @@ window.__ModuleLoader__.load({
       appIdHint: '例如 cli_xxxxxxxxxxxxxxxx',
       appSecret: 'App Secret',
       appSecretHint: '已保存；留空表示不修改',
+      advanced: '高级',
+      maxPending: '最多同时挂起的确认请求',
+      pollIntervalMs: '消息轮询间隔（毫秒）',
+      larkCliPath: 'lark-cli 路径（可选）',
+      larkCliPathHint: '默认从 PATH 查找；Windows 可填 lark-cli.exe / .cmd 的完整路径',
       chatName: '目标群名',
       chatNameHint: '机器人已加入的群名；只有一个群时可留空',
       chatId: '目标群 chat_id（可选）',
@@ -83,6 +88,11 @@ window.__ModuleLoader__.load({
       appIdHint: 'e.g. cli_xxxxxxxxxxxxxxxx',
       appSecret: 'App Secret',
       appSecretHint: 'Saved; leave blank to keep it',
+      advanced: 'Advanced',
+      maxPending: 'Max open prompts',
+      pollIntervalMs: 'Message poll interval (ms)',
+      larkCliPath: 'lark-cli path (optional)',
+      larkCliPathHint: 'Looked up on PATH by default; on Windows point at lark-cli.exe or the .cmd shim',
       chatName: 'Target group name',
       chatNameHint: 'A group the bot has joined; optional when it has exactly one',
       chatId: 'Target chat_id (optional)',
@@ -162,7 +172,8 @@ window.__ModuleLoader__.load({
       const [notice, setNotice] = React.useState('')
       const [error, setError] = React.useState('')
       const [form, setForm] = React.useState({
-        appId: '', appSecret: '', chatName: '', chatId: '', userId: '',
+        appId: '', appSecret: '', larkCliPath: '', chatName: '', chatId: '', userId: '',
+        maxPending: '8', pollIntervalMs: '3000',
         receive: 'auto', enabled: true, questions: true, approvals: true, watchMessages: true,
       })
 
@@ -171,6 +182,9 @@ window.__ModuleLoader__.load({
         setForm({
           appId: value.appId ?? '',
           appSecret: '',
+          larkCliPath: value.larkCliPath ?? '',
+          maxPending: String(value.maxPending ?? 8),
+          pollIntervalMs: String(value.pollIntervalMs ?? 3000),
           chatName: value.target?.chatName ?? '',
           chatId: value.target?.chatId ?? '',
           userId: value.target?.userId ?? '',
@@ -210,6 +224,9 @@ window.__ModuleLoader__.load({
               enabled: form.enabled,
               appId: form.appId,
               appSecret: form.appSecret,
+              larkCliPath: form.larkCliPath,
+              maxPending: Number(form.maxPending),
+              pollIntervalMs: Number(form.pollIntervalMs),
               receive: form.receive,
               target: { chatName: form.chatName, chatId: form.chatId, userId: form.userId },
               bridge: { questions: form.questions, approvals: form.approvals },
@@ -301,6 +318,14 @@ window.__ModuleLoader__.load({
                 if (status !== undefined && value !== (status.appId ?? '') && form.userId.length > 0) update('userId', '')
               },
             })),
+          h(Field, { label: t('larkCliPath'), hint: t('larkCliPathHint') },
+            h('input', {
+              style: styles.input,
+              value: form.larkCliPath,
+              placeholder: 'lark-cli 完整路径，或留空使用 PATH',
+              spellCheck: false,
+              onChange: (event) => { update('larkCliPath', event.target.value) },
+            })),
           h(Field, { label: t('appSecret'), hint: t('appSecretHint') },
             h('input', {
               style: styles.input,
@@ -319,6 +344,28 @@ window.__ModuleLoader__.load({
             h('input', { style: styles.input, value: form.chatId, spellCheck: false, onChange: (event) => { update('chatId', event.target.value) } })),
           h(Field, { label: t('userId'), hint: t('userIdHint') },
             h('input', { style: styles.input, value: form.userId, spellCheck: false, onChange: (event) => { update('userId', event.target.value) } }))),
+
+        h('div', { style: styles.card },
+          h('h3', { style: styles.cardTitle }, t('advanced')),
+          h(Field, { label: t('maxPending') },
+            h('input', {
+              style: styles.input,
+              type: 'number',
+              min: 1,
+              max: 64,
+              value: form.maxPending,
+              onChange: (event) => { update('maxPending', event.target.value) },
+            })),
+          h(Field, { label: t('pollIntervalMs') },
+            h('input', {
+              style: styles.input,
+              type: 'number',
+              min: 500,
+              max: 600000,
+              step: 500,
+              value: form.pollIntervalMs,
+              onChange: (event) => { update('pollIntervalMs', event.target.value) },
+            }))),
 
         h('div', { style: styles.card },
           h('h3', { style: styles.cardTitle }, t('mode')),

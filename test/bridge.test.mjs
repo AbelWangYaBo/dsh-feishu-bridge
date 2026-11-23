@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { FeishuBridge } from '../index.js'
 
 let messageSeq = 0
@@ -97,7 +99,7 @@ function makeBridge(mode) {
 }
 
 function makeAgent() {
-  return { session: { id: 'session-test', header: { cwd: '/tmp/workspace' } } }
+  return { session: { id: 'session-test', header: { cwd: join(tmpdir(), 'workspace') } } }
 }
 
 function questionRequest(agent, signal) {

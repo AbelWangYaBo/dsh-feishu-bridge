@@ -14,7 +14,7 @@ if (options === undefined || target.userId === '' || !sendsEnabled()) {
   process.exit(0)
 }
 
-const fileLog = createFileLogger('/tmp/feishu-bridge-inspect-multiq.log')
+const fileLog = createFileLogger(join(tmpdir(), 'feishu-bridge-inspect-multiq.log'))
 const log = (...parts) => { fileLog(parts.join(' ')) }
 const lark = new LarkCli({
   bin: resolveLarkCli(undefined),
@@ -47,7 +47,7 @@ const bridge = new FeishuBridge({
 bridge.mode = 'callback'
 bridge.ready = true
 
-const agent = { session: { id: 'session-inspect', header: { cwd: '/tmp/inspect' } } }
+const agent = { session: { id: 'session-inspect', header: { cwd: join(tmpdir(), 'inspect') } } }
 const questions = [
   { id: 'q1', header: '选择方案', question: '多问题批量验证：请选择「方案 B」。', options: [{ label: '方案 A' }, { label: '方案 B' }] },
   { id: 'q2', question: '请在这里输入任意文字（例如 ok），用于验证自定义输入框。' },
